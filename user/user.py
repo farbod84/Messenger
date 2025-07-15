@@ -121,8 +121,6 @@ class AddContactDialog(QDialog):
         self.error_label = Label("Error")
         self.error_label.setStyleSheet("color: transparent;")
 
-        # self.err()
-
         layout.addLayout(form)
         layout.addWidget(self.error_label)
 
@@ -249,12 +247,11 @@ class ContactHeaderWidget(QWidget):
 class ChatSignals(QObject):
     new_message = Signal(str, str, bool)
 
-class ChatTab(Widget):
-    def __init__(self):
-        self.signals = ChatSignals()
-        self.signals.new_message.connect(self.append_message)
 
+class Connect_with_client:
+    def __init__(self):
         self.user = User()
+        # for handeling the errors :
         if self.user.error == 404:
             print('private_key pem not found:(')
         elif self.user.error == 100:
@@ -263,12 +260,92 @@ class ChatTab(Widget):
             print('access deny! wrong password:(')
         else:
             print('connection successfully:)')
+
         thread = threading.Thread(target=self.recv_message)
         thread.start()
 
+    #send text message
+    def send_message(self):
+        text = self.input_field.text().strip()
+        if not text:
+            return
+
+        self.contacts[self.current_contact]["messages"].append((text, 'me'))
+        self.append_message(text, 'me')
+
+        self.user.send_data(self.contacts[self.current_contact]["username"], self.contacts[self.current_contact]["public_key"], text)
+
+        self.input_field.clear()
+
+    #send image data
+    def send_image(self):
+        filename, _ = QFileDialog.getOpenFileName(self, "Select Image", "", "Images (*.png *.jpg *.jpeg *.bmp)")
+        if filename:
+            self.contacts[self.current_contact]["messages"].append((filename, 'me', True))
+            self.append_message(filename, 'me', is_image=True)
+            self.user.send_data(self.contacts[self.current_contact]["username"], self.contacts[self.current_contact]["public_key"], filename, True)
+
+    #revice message and images
+    def recv_message(self):
+        while True:
+            given = self.user.recv_data()
+            if not given:
+                self.refresh_contact_list()
+                continue
+            if len(given) == 2:
+                username, data = given
+                is_image = False
+            else:
+                username, data, is_image = given
+            if username == '$exist_user':
+                if data != b'0':
+                    contact = pickle.loads(data)
+                    if contact['profile_image']:
+                        contact['profile_image'] = f'database/{contact['username']}.jpg'
+                    found = False
+                    for name in self.contacts:
+                        if self.contacts[name]['username'] == contact['username']:
+                            messages = self.contacts[name]['messages']
+                            self.contacts[name] = contact
+                            self.contacts[name]['messages'] = messages
+                            self.contacts[name]['name'] = name
+                            found = True
+                            break
+                    if not found and contact['username'] != self.user.username:
+                        self.contacts[contact['username']] = contact
+                        self.contacts[contact['username']]['messages'] = []
+                    self.database.save_contact_list(self.contacts)
+                    self.refresh_contact_list()
+                continue
+            if is_image:
+                file_name = str(uuid.uuid4())
+                with open(f'database/{file_name}.jpg', 'wb') as file:
+                    file.write(data)
+                data = f'database/{file_name}.jpg'
+            found = False
+            for name in self.contacts:
+                if self.contacts[name]['username'] == username:
+                    found = True
+                    self.contacts[name]["messages"].append((data, 'other', is_image))
+                    if name == self.current_contact:
+                        self.signals.new_message.emit(data, 'other', is_image)
+            if not found:
+                if is_image:
+                    self.contacts[username] = {"messages": [(data, 'other', is_image)], "username": username}
+                else:
+                    self.contacts[username] = {"messages": [(data, 'other')], "username": username}
+                self.user.check_user(username)
+
+class ChatTab(Widget, Connect_with_client):
+    def __init__(self):
+        Widget.__init__(self, "Chats")
+        Connect_with_client.__init__(self)
+
+        self.signals = ChatSignals()
+        self.signals.new_message.connect(self.append_message)
+
         self.database = Database()
 
-        super().__init__("Chats")
         self.chat_list = QListWidget()
         self.chat_list.setStyleSheet("""
             QListWidget {
@@ -443,68 +520,6 @@ class ChatTab(Widget):
             else:
                 del msg
 
-    def send_message(self):
-        text = self.input_field.text().strip()
-        if not text:
-            return
-
-        self.contacts[self.current_contact]["messages"].append((text, 'me'))
-        self.append_message(text, 'me')
-
-        self.user.send_data(self.contacts[self.current_contact]["username"], self.contacts[self.current_contact]["public_key"], text)
-
-        self.input_field.clear()
-
-    def recv_message(self):
-        while True:
-            given = self.user.recv_data()
-            if not given:
-                self.refresh_contact_list()
-                continue
-            if len(given) == 2:
-                username, data = given
-                is_image = False
-            else:
-                username, data, is_image = given
-            if username == '$exist_user':
-                if data != b'0':
-                    contact = pickle.loads(data)
-                    if contact['profile_image']:
-                        contact['profile_image'] = f'database/{contact['username']}.jpg'
-                    found = False
-                    for name in self.contacts:
-                        if self.contacts[name]['username'] == contact['username']:
-                            messages = self.contacts[name]['messages']
-                            self.contacts[name] = contact
-                            self.contacts[name]['messages'] = messages
-                            self.contacts[name]['name'] = name
-                            found = True
-                            break
-                    if not found and contact['username'] != self.user.username:
-                        self.contacts[contact['username']] = contact
-                        self.contacts[contact['username']]['messages'] = []
-                    self.database.save_contact_list(self.contacts)
-                    self.refresh_contact_list()
-                continue
-            if is_image:
-                file_name = str(uuid.uuid4())
-                with open(f'database/{file_name}.jpg', 'wb') as file:
-                    file.write(data)
-                data = f'database/{file_name}.jpg'
-            found = False
-            for name in self.contacts:
-                if self.contacts[name]['username'] == username:
-                    found = True
-                    self.contacts[name]["messages"].append((data, 'other', is_image))
-                    if name == self.current_contact:
-                        self.signals.new_message.emit(data, 'other', is_image)
-            if not found:
-                if is_image:
-                    self.contacts[username] = {"messages": [(data, 'other', is_image)], "username": username}
-                else:
-                    self.contacts[username] = {"messages": [(data, 'other')], "username": username}
-                self.user.check_user(username)
-
     def append_message(self, content: str, sender: str = 'me', is_image: bool = False):
         item_widget = MessageWidget(content, sender, is_image)
         list_item = QListWidgetItem()
@@ -514,12 +529,6 @@ class ChatTab(Widget):
         self.chat_list.scrollToBottom()
         self.database.save_contact_list(self.contacts)
 
-    def send_image(self):
-        filename, _ = QFileDialog.getOpenFileName(self, "Select Image", "", "Images (*.png *.jpg *.jpeg *.bmp)")
-        if filename:
-            self.contacts[self.current_contact]["messages"].append((filename, 'me', True))
-            self.append_message(filename, 'me', is_image=True)
-            self.user.send_data(self.contacts[self.current_contact]["username"], self.contacts[self.current_contact]["public_key"], filename, True)
 
 
 class MessengerWindow(Widget):
