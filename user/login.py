@@ -38,6 +38,11 @@ class Log_In(Widget):
         self.signup_button = signup_button
         main_layout.addWidget(self.signup_button)
 
+        error_lable = Label()
+        self.error_lable = error_lable
+        main_layout.addWidget(error_lable)
+        main_layout.addSpacing(30)
+
         self.setLayout(main_layout)
 
     def login_button_clicked(self):
@@ -53,26 +58,29 @@ class Log_In(Widget):
         try:
             with open('server.conf') as file:
                 url = file.read().split(':')
-            with open('user_data.conf', 'rb') as file:
-                self.user_data = pickle.load(file)
         except:
             if url[0] == '':
                 print('invalid server url')
                 exit()
         s.connect((url[0], int(url[1])))
-        s.sendall(b'$get_info')
+        s.send(b'$login')
         sleep(0.1)
-        s.sendall(user_data['username'].encode())
-        user_data['private_key'] = s.recv(1024).decode()
-        if user_data['private_key'] == '404':
-            #TODO invalid username
+        s.send(user_data['username'].encode())
+        user_data['private_key'] = s.recv(1048576)
+        if user_data['private_key'] == b'404':
+            self.error_lable.setText('invalid username!')
             return
         encryption = Encryption()
         if not encryption.load_key(user_data['private_key'], self.password_input.text()):
-            #TODO invalid password
+            self.error_lable.setText('invalid password!')
             return
-        s.sendall(encryption.sign(s.recv(1024)))
-        user_data = pickle.loads(s.recv(1024))
+        s.send(encryption.sign(s.recv(1024)))
+        error = s.recv(1024)
+        if error != b'0':
+            self.error_lable.setText(f'error {error} somthing went wrong:(')
+            return
+        user_data = pickle.loads(s.recv(1048576))
+        user_data['password'] = self.password_input.text()
         with open('user_data.conf', 'wb') as file:
             pickle.dump(user_data, file)
         s.close()
@@ -126,11 +134,16 @@ class Sign_Up(Widget):
         self.login_button = login_button
         main_layout.addWidget(self.login_button)
 
+        error_lable = Label()
+        self.error_lable = error_lable
+        main_layout.addWidget(error_lable)
+        main_layout.addSpacing(30)
+
         self.setLayout(main_layout)
 
     def signup_button_clicked(self):
         if self.password_input.text() != self.confirm_password_input.text():
-            #TODO not same password
+            self.error_lable.setText('passwords are not same')
             return
         encryption = Encryption()
         password = self.password_input.text()
@@ -154,11 +167,15 @@ class Sign_Up(Widget):
                 print('invalid server url')
                 exit()
         s.connect((url[0], int(url[1])))
-        s.sendall(b'$create_account')
+        s.send(b'$create_account')
         sleep(0.1)
-        s.sendall(pickle.dumps(user_data))
-        if s.recv(1024) == b'1':
-            #TODO invalid username
+        s.send(pickle.dumps(user_data))
+        error = s.recv(1024)
+        if error == b'1':
+            self.error_lable.setText('username is allready exist!')
+            return
+        elif error == b'2':
+            self.error_lable.setText('invalid username!')
             return
         user_data['password'] = password
         with open('user_data.conf', 'wb') as file:

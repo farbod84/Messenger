@@ -1,23 +1,20 @@
-from PySide6.QtCore import QSize
+from PySide6.QtCore import QSize, Signal, QObject
 from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QAbstractItemView, QListWidgetItem
+from PySide6.QtWidgets import QAbstractItemView, QListWidgetItem, QMessageBox
 
 from main import *
 from client import User
+from database import Database
 import threading
 import pickle
+import uuid
+import os, shutil
 
-'''
-    'username': 'farbod42',
-    'password': 'Arian',
-    'phone': '+989123456789',
-    'bio': 'Life is short, smile!',
-    'profile_image': None
-'''
 class ProfileTab(Widget):
-    def __init__(self, user):
+    def __init__(self, user, client):
         super().__init__("My Profile")
         self.user = user
+        self.client = client
 
         outer_layout = QVBoxLayout()
         top_bar = QHBoxLayout()
@@ -85,19 +82,30 @@ class ProfileTab(Widget):
         if filename:
             self.user['profile_image'] = filename
             self.set_profile_picture(filename)
+            with open('user_data.conf', 'wb') as file:
+                pickle.dump(self.user, file)
+            self.client.change_info(self.user)
+            shutil.copy(filename, f'database/{self.user['username']}.jpg')
 
     def save_bio(self):
         self.user['bio'] = self.bio_edit.toPlainText()
+        with open('user_data.conf', 'wb') as file:
+            pickle.dump(self.user, file)
+        self.client.change_info(self.user)
 
     def logout(self):
-        print("Logging out from profile tab...")
+        os.remove('user_data.conf')
+        os.remove('contacts.db')
+        shutil.rmtree('database', ignore_errors=True)
+        os.mkdir('database')
+        os._exit(0)
 
 
 class AddContactDialog(QDialog):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Add New Contact")
-        self.setFixedSize(400, 300)
+        self.setFixedSize(400, 250)
 
         self.error_situation = 0
 
@@ -106,12 +114,6 @@ class AddContactDialog(QDialog):
 
         self.name_input = LineEdit()
         form.addRow("Name:", self.name_input)
-
-        self.phone_input = LineEdit()
-        regex = QRegularExpression(r"\d{0,11}")
-        validator = QRegularExpressionValidator(regex)
-        self.phone_input.setValidator(validator)
-        form.addRow("Phone Number:", self.phone_input)
 
         self.username_input = LineEdit()
         form.addRow("Username:", self.username_input)
@@ -131,7 +133,7 @@ class AddContactDialog(QDialog):
         self.setLayout(layout)
 
     def get_contact_info(self):
-        return [self.name_input.text().strip(), self.phone_input.text().strip(), self.username_input.text().strip()]
+        return [self.name_input.text().strip(), self.username_input.text().strip()]
 
     def err(self):
         self.error_situation = 1 - self.error_situation
@@ -219,6 +221,22 @@ class ContactHeaderWidget(QWidget):
         layout.addLayout(info_layout)
         layout.addStretch()
 
+        self.delete_btn = QPushButton("🗑 Delete Chat")
+        self.delete_btn.setFixedSize(130, 40)
+        self.delete_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #e53935;
+                        color: white;
+                        font-size: 16px;
+                        border-radius: 6px;
+                        padding: 6px 12px;
+                    }
+                    QPushButton:hover {
+                        background-color: #b71c1c;
+                    }
+                """)
+        layout.addWidget(self.delete_btn)
+
         self.setLayout(layout)
 
     def set_profile_picture(self, path):
@@ -228,9 +246,28 @@ class ContactHeaderWidget(QWidget):
         else:
             self.pic.setText("No\nImage")
 
+class ChatSignals(QObject):
+    new_message = Signal(str, str, bool)
 
 class ChatTab(Widget):
     def __init__(self):
+        self.signals = ChatSignals()
+        self.signals.new_message.connect(self.append_message)
+
+        self.user = User()
+        if self.user.error == 404:
+            print('private_key pem not found:(')
+        elif self.user.error == 100:
+            print('cannot make connection with server:(')
+        elif self.user.error == 403:
+            print('access deny! wrong password:(')
+        else:
+            print('connection successfully:)')
+        thread = threading.Thread(target=self.recv_message)
+        thread.start()
+
+        self.database = Database()
+
         super().__init__("Chats")
         self.chat_list = QListWidget()
         self.chat_list.setStyleSheet("""
@@ -243,37 +280,9 @@ class ChatTab(Widget):
         self.chat_list.setSpacing(5)
 
         self.init_ui()
-        self.user = User()
-        if self.user.error == 404:
-            print('private_key pam not found:(')
-        elif self.user.error == 100:
-            print('cannot make connection with server:(')
-        elif self.user.error == 403:
-            print('access deny! wrong password:(')
-        else:
-            print('connection successfully:)')
-        thread = threading.Thread(target=self.recv_message)
-        thread.start()
 
     def init_ui(self):
-        self.contacts = {
-            "Alice": {
-                "messages": [],
-                "name": "Alice",
-                "phone": "0912 0000000",
-                "username": "alice_queen",
-                "bio": "Always curious.",
-                "profile_image": "assets/alice_queen.jpg"
-            },
-            "Bob": {
-                "messages": [],
-                "name": "Bob",
-                "phone": "0912 0000001",
-                "username": "bob_king",
-                "bio": "Always smile.",
-                "profile_image": None
-            }
-        }
+        self.contacts = self.database.load_contacts()
 
         self.current_contact = list(self.contacts.keys())[0]
 
@@ -299,7 +308,6 @@ class ChatTab(Widget):
                 color: white;
             }
         """)
-        self.contact_list.currentItemChanged.connect(self.change_chat)
         left_panel.addWidget(self.contact_list)
 
         self.refresh_contact_list()
@@ -308,7 +316,7 @@ class ChatTab(Widget):
 
         self.header_widget = ContactHeaderWidget(self.contacts[self.current_contact])
         right_panel.addWidget(self.header_widget)
-
+        self.contact_list.currentItemChanged.connect(self.change_chat)
         # self.chat_display.setMinimumHeight(600)
 
         input_layout = QHBoxLayout()
@@ -348,9 +356,16 @@ class ChatTab(Widget):
         self.setLayout(layout)
         self.load_chat()
 
+        for contact in self.contacts:
+            self.user.check_user(self.contacts[contact]['username'])
+
     def refresh_contact_list(self):
         self.contact_list.clear()
+        delete_contacts = []
         for key, contact in self.contacts.items():
+            if 'public_key' not in contact:
+                delete_contacts.append(key)
+                continue
             item = QListWidgetItem()
 
             item.setText(f"{contact['name']}")
@@ -368,32 +383,65 @@ class ChatTab(Widget):
 
             self.contact_list.addItem(item)
 
+        for key in delete_contacts:
+            if len(self.contacts) > 1:
+                del self.contacts[key]
+            if key == self.current_contact:
+                self.current_contact = list(self.contacts.keys())[0]
+
         self.contact_list.setIconSize(QSize(60, 60))
         self.contact_list.setCurrentRow(0)
 
     def show_add_contact_dialog(self):
         dialog = AddContactDialog()
         if dialog.exec():
-            name = dialog.get_contact_info()
-            if name and name not in self.contacts:
-                self.user.check_user(name)
+            info = dialog.get_contact_info()
+            self.contacts[info[0]] = {"name" : info[0], "messages" : [], "username" : info[1]}
+            self.user.check_user(info[1])
 
-    def change_chat(self, current, previous):
+    def change_chat(self, current):
         if current:
             self.current_contact = current.text()
-            self.header_widget.setParent(None)  # حذف قبلی
+            self.header_widget.setParent(None)
             self.header_widget = ContactHeaderWidget(self.contacts[self.current_contact])
+            self.header_widget.delete_btn.clicked.connect(self.delete_current_chat)
             self.layout().itemAt(1).layout().insertWidget(0, self.header_widget)
             self.load_chat()
+
+    def delete_current_chat(self):
+        if self.contacts[self.current_contact]['username'] == self.user.username:
+            return
+        confirm = QMessageBox.question(self, "Delete Contact",
+                                       f"Are you sure you want to delete contact {self.current_contact} and all related messages?",
+                                       QMessageBox.Yes | QMessageBox.No)
+        if confirm == QMessageBox.Yes:
+            del self.contacts[self.current_contact]  
+            self.database.save_contact_list(self.contacts)
+
+            self.refresh_contact_list()
+
+            if self.contacts:
+                self.current_contact = list(self.contacts.keys())[0]
+                self.header_widget.setParent(None)
+                self.header_widget = ContactHeaderWidget(self.contacts[self.current_contact])
+                self.header_widget.delete_btn.clicked.connect(self.delete_current_chat)
+                self.layout().itemAt(1).layout().insertWidget(0, self.header_widget)
+                self.load_chat()
+            else:
+                self.chat_list.clear()
+                self.header_widget.setParent(None)
 
     def load_chat(self):
         self.chat_list.clear()
         messages = self.contacts[self.current_contact]["messages"]
         for msg in messages:
-            if len(msg) == 3:
-                self.append_message(msg[0], msg[1], msg[2])
+            if type(msg[0]) == type(msg[1]) == type('str'):
+                if len(msg) == 3:
+                    self.append_message(msg[0], msg[1], msg[2])
+                else:
+                    self.append_message(msg[0], msg[1])
             else:
-                self.append_message(msg[0], msg[1])
+                del msg
 
     def send_message(self):
         text = self.input_field.text().strip()
@@ -409,33 +457,69 @@ class ChatTab(Widget):
 
     def recv_message(self):
         while True:
-            username, data = self.user.recv_data()
+            given = self.user.recv_data()
+            if not given:
+                self.refresh_contact_list()
+                continue
+            if len(given) == 2:
+                username, data = given
+                is_image = False
+            else:
+                username, data, is_image = given
             if username == '$exist_user':
                 if data != b'0':
                     contact = pickle.loads(data)
-                    self.contacts[contact['username']] = contact
-                    self.contacts[contact['username']]['messages'] = []
+                    if contact['profile_image']:
+                        contact['profile_image'] = f'database/{contact['username']}.jpg'
+                    found = False
+                    for name in self.contacts:
+                        if self.contacts[name]['username'] == contact['username']:
+                            messages = self.contacts[name]['messages']
+                            self.contacts[name] = contact
+                            self.contacts[name]['messages'] = messages
+                            self.contacts[name]['name'] = name
+                            found = True
+                            break
+                    if not found and contact['username'] != self.user.username:
+                        self.contacts[contact['username']] = contact
+                        self.contacts[contact['username']]['messages'] = []
+                    self.database.save_contact_list(self.contacts)
                     self.refresh_contact_list()
                 continue
-            if not username in self.contacts:
-                self.contacts[username] = {"messages": [], "username": username}
-            self.contacts[username]["messages"].append((data, 'other'))
-            if username == self.current_contact:
-                self.append_message(data, 'other')
+            if is_image:
+                file_name = str(uuid.uuid4())
+                with open(f'database/{file_name}.jpg', 'wb') as file:
+                    file.write(data)
+                data = f'database/{file_name}.jpg'
+            found = False
+            for name in self.contacts:
+                if self.contacts[name]['username'] == username:
+                    found = True
+                    self.contacts[name]["messages"].append((data, 'other', is_image))
+                    if name == self.current_contact:
+                        self.signals.new_message.emit(data, 'other', is_image)
+            if not found:
+                if is_image:
+                    self.contacts[username] = {"messages": [(data, 'other', is_image)], "username": username}
+                else:
+                    self.contacts[username] = {"messages": [(data, 'other')], "username": username}
+                self.user.check_user(username)
 
-    def append_message(self, content, sender='me', is_image=False):
+    def append_message(self, content: str, sender: str = 'me', is_image: bool = False):
         item_widget = MessageWidget(content, sender, is_image)
         list_item = QListWidgetItem()
         list_item.setSizeHint(item_widget.sizeHint())
         self.chat_list.addItem(list_item)
         self.chat_list.setItemWidget(list_item, item_widget)
         self.chat_list.scrollToBottom()
+        self.database.save_contact_list(self.contacts)
 
     def send_image(self):
         filename, _ = QFileDialog.getOpenFileName(self, "Select Image", "", "Images (*.png *.jpg *.jpeg *.bmp)")
         if filename:
             self.contacts[self.current_contact]["messages"].append((filename, 'me', True))
             self.append_message(filename, 'me', is_image=True)
+            self.user.send_data(self.contacts[self.current_contact]["username"], self.contacts[self.current_contact]["public_key"], filename, True)
 
 
 class MessengerWindow(Widget):
@@ -466,10 +550,15 @@ class MessengerWindow(Widget):
 
         chattab = ChatTab()
         self.tabs.addTab(chattab, "Chats")
-        self.tabs.addTab(ProfileTab(chattab.user.user_data), "My Profile")
+        self.tabs.addTab(ProfileTab(chattab.user.user_data, chattab.user), "My Profile")
 
         layout.addWidget(self.tabs)
         self.setLayout(layout)
+
+    def closeEvent(self, event):
+        event.accept()
+        print('goodbye!')
+        os._exit(0)
 
 
 if __name__ == '__main__':

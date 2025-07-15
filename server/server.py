@@ -6,74 +6,87 @@ from encryption import Encryption
 
 class Server:
   def __init__(self):
+    self.cutter = b''
+    for i in range(10):
+      self.cutter += chr(i).encode()
     self.users = {}
     self.queue = {}
     self.encryption = Encryption()
     self.server_program()
 
-  def autenticate(self, client_socket, username):
+  def authenticate(self, client_socket, username):
       user_data = None
       try:
         with open(f'user_data/{username}', 'rb') as file:
           user_data = pickle.load(file)
       except:
-        client_socket.sendall(b'404')
+        client_socket.send(b'404')
         return
       public_key = self.encryption.load_public_key(user_data["public_key"])
       time_hash = self.encryption.hash(time.time())
-      client_socket.sendall(time_hash)
-      sign = client_socket.recv(1024)
-      if not self.encryption.verfy(time_hash, sign, public_key):
-        client_socket.sendall(b'403')
+      client_socket.send(time_hash)
+      sign = client_socket.recv(1048576)
+      if not self.encryption.verify(time_hash, sign, public_key):
+        client_socket.send(b'403')
         return False
-      client_socket.sendall(b'0')
+      client_socket.send(b'0')
+      time.sleep(0.1)
       return user_data
 
   def handle_client(self, client_socket, address):
       username = client_socket.recv(1024).decode()
-      if username == '$get_info':
+      if username == '$login':
         username = client_socket.recv(1024).decode()
         user_data = None
         try:
           with open(f'user_data/{username}', 'rb') as file:
             user_data = pickle.load(file)
         except:
-          client_socket.sendall(b'404')
+          client_socket.send(b'404')
           return
-        client_socket.sendall(user_data['private_key'].encode())
-        if self.autenticate(client_socket, username):
-          client_socket.sendall(pickle.dumps(user_data))
+        client_socket.send(user_data['private_key'])
+        if self.authenticate(client_socket, username):
+          client_socket.send(pickle.dumps(user_data))
         else:
-          client_socket.sendall(b'403')
+          client_socket.send(b'403')
         return
       elif username == '$create_account':
         user_data = pickle.loads(client_socket.recv(1048576))
+        for e in '!@#$%^&*()-=+\'\\:;\".,/ \n\t':
+          if e in user_data['username']:
+            client_socket.send(b'2')
+            return
         try:
           with open(f'user_data/{user_data['username']}', 'rb') as file:
-            client_socket.sendall(b'1')
+            client_socket.send(b'1')
             return
         except:
           pass
         with open(f'user_data/{user_data['username']}', 'wb') as file:
           pickle.dump(user_data, file)
-        client_socket.sendall(b'0')
+        client_socket.send(b'0')
         return
-      user_data = self.autenticate(client_socket, username)
+      user_data = self.authenticate(client_socket, username)
       if not user_data:
         return
       self.users[username] = client_socket
-      print(f"Accepted connection from {username} with address {address}")
+      print(f"Accepted connection from @{username} with address {address}")
       if username in self.queue:
-         for destination_username, send_data in self.queue[username]:
-            client_socket.sendall(destination_username.encode())
+          for destination_username, send_data in self.queue[username]:
+            client_socket.send(destination_username.encode())
             time.sleep(0.1)
-            client_socket.sendall(send_data)
+            client_socket.send(send_data)
+            time.sleep(max(0.1, len(send_data)/2e5))
+          del self.queue[username]
       try:
         while True:
-          destination = client_socket.recv(1024).decode()
+          try:
+            destination = client_socket.recv(1024).decode()
+          except:
+            continue
           if not destination or destination[:5] != 'send:':
             if destination[:6] == 'valid:':
-              client_socket.sendall(b'$exist_user')
+              client_socket.send(b'$exist_user')
               time.sleep(0.1)
               try:
                 with open(f'user_data/{destination[6:]}', 'rb') as file:
@@ -86,20 +99,55 @@ class Server:
                     "phone": None,
                     "public_key": user['public_key']
                   }
-                  client_socket.sendall(pickle.dumps(contact))
+                  client_socket.send(pickle.dumps(contact))
+                  time.sleep(0.1)
+                  if contact['profile_image'] != None:
+                    client_socket.send((f'$profile_image {user['username']}').encode())
+                    time.sleep(0.1)
+                    with open(f'user_data/{user['username']}.jpg', 'rb') as file:
+                      data = file.read()
+                    client_socket.send(data+self.cutter)
+                    time.sleep(max(0.1, len(data)/2e5))
               except:
-                client_socket.sendall(b'0')
+                client_socket.send(b'0')
+            elif destination == '$change_info':
+              new_user_data = pickle.loads(client_socket.recv(1048576))
+              try:
+                with open(f'user_data/{username}', 'rb') as file:
+                  user_data = pickle.load(file)
+              except:
+                continue
+              public_key = self.encryption.load_public_key(user_data["public_key"])
+              if not self.encryption.verify(new_user_data, client_socket.recv(1048576), public_key):
+                continue
+              if new_user_data['profile_image'] != None:
+                new_user_data['profile_image'] = f'user_data/{username}.jpg'
+              with open(f'user_data/{username}', 'wb') as file:
+                pickle.dump(new_user_data, file)
             continue
           user_destination = destination[5:]
           data = b''
-          while not data or data[-1] != b'\f':
+          while data == b'' or data[-10:] != self.cutter:
             data += client_socket.recv(1024)
-          if not self.encryption.verfy((user_destination, data), client_socket.recv(1048576), self.encryption.load_public_key(user_data['public_key'])):
+          if self.cutter in data[:-10]:
+            parts = data.split(self.cutter)
+            data = parts[0]+self.cutter
+            sign = parts[1]+self.cutter
+          else:
+            sign = b''
+            while sign == b'' or sign[-10:] != self.cutter:
+              sign += client_socket.recv(1024)
+          if not self.encryption.verify((user_destination, data), sign[:-10], self.encryption.load_public_key(user_data['public_key'])):
             break
+          if user_destination == '$profile_image':
+            with open(f'user_data/{username}.jpg', 'wb') as file:
+              file.write(data[:-10])
+            continue
           try:
-            self.users[user_destination].sendall(username.encode())
+            self.users[user_destination].send(username.encode())
             time.sleep(0.1)
-            self.users[user_destination].sendall(data.encode())
+            self.users[user_destination].send(data)
+            time.sleep(max(0.1, len(data)/2e5))
           except:
               if user_destination in self.queue:
                 self.queue[user_destination].append((username, data))

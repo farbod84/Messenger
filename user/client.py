@@ -7,6 +7,9 @@ from login import get
 class User:
     def __init__(self):
         self.error = 0
+        self.cutter = b''
+        for i in range(10):
+            self.cutter += chr(i).encode()
         self.user_data = {}
         url = ['', 0]
         try:
@@ -19,8 +22,11 @@ class User:
                 print('invalid server url')
                 exit()
             get()
-            with open('user_data.conf', 'rb') as file:
-                self.user_data = pickle.load(file)
+            try:
+                with open('user_data.conf', 'rb') as file:
+                    self.user_data = pickle.load(file)
+            except:
+                exit(0)
         self.ip = url[0]
         self.port = int(url[1])
         self.username = self.user_data['username']
@@ -28,36 +34,75 @@ class User:
         self.encryption.load_key(self.user_data['private_key'], self.user_data['password'])
         self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
-            self.s.connect((self.ip, self.port))
-            self.s.sendall(self.username.encode())
-            self.s.sendall(self.encryption.sign(self.s.recv(1024)))
+            connected = False
+            while not connected:
+                try:
+                    self.s.connect((self.ip, self.port))
+                    connected = True
+                except:
+                    sleep(5)
+            self.s.send(self.username.encode())
+            self.s.send(self.encryption.sign(self.s.recv(1024)))
             error = self.s.recv(1024).decode()
             if error != '0':
                 self.error = 1000+int(error)
         except:
             self.error = 100
 
-    def send_data(self, destination_username, destination_public_key, data):
-        data = self.encryption.encrypt(data, self.encryption.load_public_key(destination_public_key))
+    def send_data(self, destination_username, destination_public_key, data, is_file = False):
+        if destination_username == self.username: return
+        data = self.encryption.encrypt(data, self.encryption.load_public_key(destination_public_key), is_file)
         destination_username = 'send:'+destination_username
-        data += b'\f'
-        self.s.sendall(destination_username.encode())
+        data += self.cutter
+        self.s.send(destination_username.encode())
         sleep(0.1)
-        self.s.sendall(data)
+        self.s.send(data)
+        sleep(max(0.1, len(data)/2e5))
+        self.s.send(self.encryption.sign((destination_username[5:], data))+self.cutter)
         sleep(0.1)
-        self.s.sendall(self.encryption.sign((destination_username[5:], data)))
+
+    def change_info(self, new_user_data):
+        self.s.send(b'$change_info')
+        sleep(0.1)
+        self.s.send(pickle.dumps(new_user_data))
+        sleep(0.1)
+        self.s.send(self.encryption.sign(new_user_data))
+        sleep(0.1)
+        if not new_user_data['profile_image']:
+            return
+        with open(new_user_data['profile_image'], 'rb') as file:
+            data = file.read()
+        destination_username = 'send:$profile_image'
+        data += self.cutter
+        self.s.send(destination_username.encode())
+        sleep(0.1)
+        self.s.send(data)
+        sleep(max(0.1, len(data)/2e5))
+        self.s.send(self.encryption.sign((destination_username[5:], data))+self.cutter)
+        sleep(0.1)
 
     def check_user(self, username):
         username = 'valid:'+username
-        self.s.sendall(username.encode())
+        self.s.send(username.encode())
+        sleep(0.1)
 
     def recv_data(self):
-        username = self.s.recv(1024).decode()
-        if username[0] != '$':
+        try:
+            username = self.s.recv(1024).decode()
+            if not username: return
+        except: return
+        if username[0] != '$' or username[:14] == '$profile_image':
             data = b''
-            while not data or data[-1] != b'\f':
+            while data == b'' or data[-10:] != self.cutter:
                 data += self.s.recv(1024)
-            data = self.encryption.decrypt(data[:-1])
+            if username[:14] != '$profile_image':
+                data = self.encryption.decrypt(data[:-10])
+            else:
+                with open(f'database/{username[15:]}.jpg', 'wb') as file:
+                    file.write(data[:-10])
+                return
         else:
             data = self.s.recv(1048576)
+        if type(data) == type((0, 0)):
+            return (username, data[0], True)
         return (username, data)

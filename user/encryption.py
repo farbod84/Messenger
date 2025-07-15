@@ -5,6 +5,9 @@ import pickle
 class Encryption:
     def __init__(self, private_key = None):
         self.__private_key = private_key
+        self.cutter = b''
+        for i in [23, 34, 13, 24, 95, 12, 84, 92, 4]:
+            self.cutter += chr(i).encode()
         if private_key == None:
             self.create_new_key()
         else:
@@ -34,15 +37,44 @@ class Encryption:
         var = pickle.loads(bytes_data)
         return var
 
-    def encrypt(self, var: object, public_key):
-        data = self.to_bytes(var)
-        ciphertext = public_key.encrypt(data, padding.OAEP(mgf=padding.MGF1(algorithm=hashes.SHA256()), algorithm=hashes.SHA256(), label=None))
+    def encrypt(self, data: object, public_key, is_file = False):
+        if is_file:
+            with open(data, 'rb') as file:
+                data = file.read()
+        elif type(data) != type(b'byte'):
+            data = self.to_bytes(data)
+        box_size = 100
+        if len(data) > box_size:
+            ciphertext = b''
+            while len(data) > box_size:
+                box_data = data[:box_size]
+                ciphertext += public_key.encrypt(box_data, padding.OAEP(mgf=padding.MGF1(algorithm=hashes.SHA256()), algorithm=hashes.SHA256(), label=None))
+                ciphertext += self.cutter
+                data = data[box_size:]
+            ciphertext += public_key.encrypt(data, padding.OAEP(mgf=padding.MGF1(algorithm=hashes.SHA256()), algorithm=hashes.SHA256(), label=None))
+        else:
+            ciphertext = public_key.encrypt(data, padding.OAEP(mgf=padding.MGF1(algorithm=hashes.SHA256()), algorithm=hashes.SHA256(), label=None))
+        if is_file:
+            ciphertext += chr(15).encode()
         return ciphertext
 
     def decrypt(self, ciphertext: bytes):
         try:
-            data = self.__private_key.decrypt(ciphertext, padding.OAEP(mgf=padding.MGF1(algorithm=hashes.SHA256()), algorithm=hashes.SHA256(), label=None))
-            return self.to_object(data)
+            is_file = False
+            if ciphertext[-1] == 15:
+                ciphertext = ciphertext[:-1]
+                is_file = True
+            if self.cutter in ciphertext:
+                ciphertext = ciphertext.split(self.cutter)
+                data = b''
+                for cipherbox in ciphertext:
+                    data += self.__private_key.decrypt(cipherbox, padding.OAEP(mgf=padding.MGF1(algorithm=hashes.SHA256()), algorithm=hashes.SHA256(), label=None))
+            else:
+                data = self.__private_key.decrypt(ciphertext, padding.OAEP(mgf=padding.MGF1(algorithm=hashes.SHA256()), algorithm=hashes.SHA256(), label=None))
+            if is_file:
+                return (data, True)
+            else:
+                return self.to_object(data)
         except:
             return False
 
