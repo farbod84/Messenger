@@ -17,6 +17,7 @@ class Send:
     data = b''
     while data == b'' or data[-10:] != self.cutter:
       data += client_socket.recv(1024)
+
     if self.cutter in data[:-10]:
       parts = data.split(self.cutter)
       data = parts[0]+self.cutter
@@ -25,7 +26,9 @@ class Send:
       sign = b''
       while sign == b'' or sign[-10:] != self.cutter:
         sign += client_socket.recv(1024)
+
     return (data, sign)
+
 
   def send_message(self, destination, client_socket, username, user_data):
     user_destination = destination[5:]
@@ -36,9 +39,11 @@ class Send:
     if not self.encryption.verify((user_destination, data), sign[:-10], public_key):
       return False
 
-    self.update_profile(user_destination, username, data)
+    if self.update_profile(user_destination, username, data): return True
 
     self.sent(user_destination, username, data)
+
+    return True
 
 
   def update_profile(self, user_destination, username, data):
@@ -46,6 +51,8 @@ class Send:
       with open(f'user_data/{username}.jpg', 'wb') as file:
         file.write(data[:-10])
       return True
+
+    return False
 
 
   def sent(self, user_destination, username, data):

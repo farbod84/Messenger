@@ -308,7 +308,8 @@ class Recv_client:
                 self.contacts[name]["messages"].append((data, 'other', is_image))
 
                 #it seems we should also update current chat
-                if name == self.current_contact:
+                print(name, self.current_contact[0])
+                if name == self.current_contact[0]:
                     self.signals.new_message.emit(data, 'other', is_image)
 
         #not found the username, let's make it
@@ -335,7 +336,10 @@ class Recv_client:
     def update_user_info(self, data):
         if data == b'0': return
 
-        contact = pickle.loads(data)
+        try:
+            contact = pickle.loads(data)
+        except: return
+
         if contact['profile_image']:
             contact['profile_image'] = f'database/{contact['username']}.jpg'
 
@@ -414,7 +418,7 @@ class ChatTab(Widget):
     def init_ui(self):
         self.open_data()
 
-        self.current_contact = list(self.contacts.keys())[0]
+        self.current_contact = [list(self.contacts.keys())[0]]
 
         layout = QHBoxLayout()
         left_panel = QVBoxLayout()
@@ -444,7 +448,7 @@ class ChatTab(Widget):
 
         right_panel = QVBoxLayout()
 
-        self.header_widget = ContactHeaderWidget(self.contacts[self.current_contact])
+        self.header_widget = ContactHeaderWidget(self.contacts[self.current_contact[0]])
         right_panel.addWidget(self.header_widget)
         self.contact_list.currentItemChanged.connect(self.change_chat)
         # self.chat_display.setMinimumHeight(600)
@@ -513,8 +517,8 @@ class ChatTab(Widget):
         for key in delete_contacts:
             if len(self.contacts) > 1:
                 del self.contacts[key]
-            if key == self.current_contact:
-                self.current_contact = list(self.contacts.keys())[0]
+            if key == self.current_contact[0]:
+                self.current_contact[0] = list(self.contacts.keys())[0]
 
         self.contact_list.setIconSize(QSize(60, 60))
         self.contact_list.setCurrentRow(0)
@@ -530,30 +534,30 @@ class ChatTab(Widget):
 
     def change_chat(self, current):
         if current:
-            self.current_contact = current.text()
+            self.current_contact[0] = current.text()
             self.header_widget.setParent(None)
-            self.header_widget = ContactHeaderWidget(self.contacts[self.current_contact])
+            self.header_widget = ContactHeaderWidget(self.contacts[self.current_contact[0]])
             self.header_widget.delete_btn.clicked.connect(self.delete_current_chat)
             self.layout().itemAt(1).layout().insertWidget(0, self.header_widget)
             self.load_chat()
 
 
     def delete_current_chat(self):
-        if self.contacts[self.current_contact]['username'] == self.user.username:
+        if self.contacts[self.current_contact[0]]['username'] == self.user.username:
             return
         confirm = QMessageBox.question(self, "Delete Contact",
-                                       f"Are you sure you want to delete contact {self.current_contact} and all related messages?",
+                                       f"Are you sure you want to delete contact {self.current_contact[0]} and all related messages?",
                                        QMessageBox.Yes | QMessageBox.No)
         if confirm == QMessageBox.Yes:
-            del self.contacts[self.current_contact]  
+            del self.contacts[self.current_contact[0]]  
             self.database.save_contact_list(self.contacts)
 
             self.refresh_contact_list()
 
             if self.contacts:
-                self.current_contact = list(self.contacts.keys())[0]
+                self.current_contact[0] = list(self.contacts.keys())[0]
                 self.header_widget.setParent(None)
-                self.header_widget = ContactHeaderWidget(self.contacts[self.current_contact])
+                self.header_widget = ContactHeaderWidget(self.contacts[self.current_contact[0]])
                 self.header_widget.delete_btn.clicked.connect(self.delete_current_chat)
                 self.layout().itemAt(1).layout().insertWidget(0, self.header_widget)
                 self.load_chat()
@@ -563,7 +567,7 @@ class ChatTab(Widget):
 
     def load_chat(self):
         self.chat_list.clear()
-        messages = self.contacts[self.current_contact]["messages"]
+        messages = self.contacts[self.current_contact[0]]["messages"]
         for msg in messages:
             if type(msg[0]) == type(msg[1]) == type('str'):
                 if len(msg) == 3:
@@ -579,11 +583,11 @@ class ChatTab(Widget):
         if not text:
             return
 
-        self.contacts[self.current_contact]["messages"].append((text, 'me'))
+        self.contacts[self.current_contact[0]]["messages"].append((text, 'me'))
         self.append_message(text, 'me')
 
-        public_key = self.contacts[self.current_contact]["public_key"]
-        self.user.send_data(self.contacts[self.current_contact]["username"], public_key, text)
+        public_key = self.contacts[self.current_contact[0]]["public_key"]
+        self.user.send_data(self.contacts[self.current_contact[0]]["username"], public_key, text)
 
         self.input_field.clear()
 
@@ -592,10 +596,11 @@ class ChatTab(Widget):
     def send_image(self):
         filename, _ = QFileDialog.getOpenFileName(self, "Select Image", "", "Images (*.png *.jpg *.jpeg *.bmp)")
         if filename:
-            self.contacts[self.current_contact]["messages"].append((filename, 'me', True))
+            self.contacts[self.current_contact[0]]["messages"].append((filename, 'me', True))
             self.append_message(filename, 'me', is_image=True)
-            public_key = self.contacts[self.current_contact]["public_key"]
-            self.user.send_data(self.contacts[self.current_contact]["username"], public_key, filename, True)
+            public_key = self.contacts[self.current_contact[0]]["public_key"]
+            self.user.send_data(self.contacts[self.current_contact[0]]["username"], public_key, filename, True)
+
 
     #append message to the chat table
     def append_message(self, content: str, sender: str = 'me', is_image: bool = False):
