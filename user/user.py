@@ -346,6 +346,9 @@ class ChatTab(Widget, Recv_client):
 
         Recv_client.__init__(self)
 
+        for contact in self.contacts:
+            self.user.check_user(self.contacts[contact]['username'])
+
     def init_ui(self):
         self.contacts = self.database.load_contacts()
 
@@ -419,9 +422,6 @@ class ChatTab(Widget, Recv_client):
 
         self.setLayout(layout)
         self.load_chat()
-
-        for contact in self.contacts:
-            self.user.check_user(self.contacts[contact]['username'])
 
 
     def refresh_contact_list(self):
