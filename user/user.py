@@ -268,6 +268,7 @@ class Recv_client:
         else:
             print('connection successfully:)')
 
+        #make thread to recv data
         thread = threading.Thread(target=self.recv_message)
         thread.start()
 
@@ -279,49 +280,88 @@ class Recv_client:
             if not given:
                 self.refresh_contact_list()
                 continue
+
+            #convert given data to username and data
             if len(given) == 2:
                 username, data = given
                 is_image = False
             else:
                 username, data, is_image = given
+
+            #update users
             if username == '$exist_user':
-                if data != b'0':
-                    contact = pickle.loads(data)
-                    if contact['profile_image']:
-                        contact['profile_image'] = f'database/{contact['username']}.jpg'
-                    found = False
-                    for name in self.contacts:
-                        if self.contacts[name]['username'] == contact['username']:
-                            messages = self.contacts[name]['messages']
-                            self.contacts[name] = contact
-                            self.contacts[name]['messages'] = messages
-                            self.contacts[name]['name'] = name
-                            found = True
-                            break
-                    if not found and contact['username'] != self.user.username:
-                        self.contacts[contact['username']] = contact
-                        self.contacts[contact['username']]['messages'] = []
-                    self.database.save_contact_list(self.contacts)
-                    self.refresh_contact_list()
+                self.update_user_info()
                 continue
+
+            #save images
             if is_image:
-                file_name = str(uuid.uuid4())
-                with open(f'database/{file_name}.jpg', 'wb') as file:
-                    file.write(data)
-                data = f'database/{file_name}.jpg'
-            found = False
-            for name in self.contacts:
-                if self.contacts[name]['username'] == username:
-                    found = True
-                    self.contacts[name]["messages"].append((data, 'other', is_image))
-                    if name == self.current_contact:
-                        self.signals.new_message.emit(data, 'other', is_image)
-            if not found:
-                if is_image:
-                    self.contacts[username] = {"messages": [(data, 'other', is_image)], "username": username}
-                else:
-                    self.contacts[username] = {"messages": [(data, 'other')], "username": username}
-                self.user.check_user(username)
+                data = self.save_image(data)
+
+            self.add_message(username, data, is_image)
+
+
+    def add_message(self, username, data, is_image):
+        #search for username in contacts
+        found = False
+        for name in self.contacts:
+            #username found!
+            if self.contacts[name]['username'] == username:
+                found = True
+                self.contacts[name]["messages"].append((data, 'other', is_image))
+
+                #it seems we should also update current chat
+                if name == self.current_contact:
+                    self.signals.new_message.emit(data, 'other', is_image)
+
+        #not found the username, let's make it
+        if not found:
+            #check user has profile photo
+            if is_image:
+                self.contacts[username] = {"messages": [(data, 'other', is_image)], "username": username}
+            else:
+                self.contacts[username] = {"messages": [(data, 'other')], "username": username}
+
+            #get full data from server about this new user
+            self.user.check_user(username)
+
+
+    #save images
+    def save_image(self, data):
+        file_name = str(uuid.uuid4())
+        with open(f'database/{file_name}.jpg', 'wb') as file:
+            file.write(data)
+        return f'database/{file_name}.jpg'
+
+
+    # for config $exits_user in the recv message
+    def update_user_info(self, data):
+        if data == b'0': return
+
+        contact = pickle.loads(data)
+        if contact['profile_image']:
+            contact['profile_image'] = f'database/{contact['username']}.jpg'
+
+        #check it is allready exits
+        found = False
+        for name in self.contacts:
+            #yep so lets update it!
+            if self.contacts[name]['username'] == contact['username']:
+                messages = self.contacts[name]['messages']
+                self.contacts[name] = contact
+                self.contacts[name]['messages'] = messages
+                self.contacts[name]['name'] = name
+                found = True
+                break
+
+        #seem we need to make it by our self!
+        if not found and contact['username'] != self.user.username:
+            self.contacts[contact['username']] = contact
+            self.contacts[contact['username']]['messages'] = []
+        self.database.save_contact_list(self.contacts)
+
+        self.refresh_contact_list()
+
+
 
 class ChatTab(Widget, Recv_client):
     def __init__(self):
@@ -344,8 +384,10 @@ class ChatTab(Widget, Recv_client):
 
         self.init_ui()
 
-        Recv_client.__init__(self)
+        Recv_client.__init__(self, self.refresh_contact_list, self.contacts, 
+                             self.database, self.current_contact, self.signals)
 
+        #update the users
         for contact in self.contacts:
             self.user.check_user(self.contacts[contact]['username'])
 
