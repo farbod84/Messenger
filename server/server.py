@@ -66,6 +66,22 @@ class Files:
   def __init__(self):
     pass
 
+  #make contact from user
+  def make_contact_user(self, client_socket, username):
+    user = self.open_userdata(client_socket, username)
+
+    contact = {
+      "messages": [],
+      "username": user['username'],
+      "bio": user['bio'],
+      "profile_image": user['profile_image'],
+      "phone": None,
+      "public_key": user['public_key']
+    }
+
+    return contact
+
+
   def open_userdata(self, client_socket, username):
     try:
       with open(f'user_data/{username}', 'rb') as file:
@@ -203,36 +219,30 @@ class Server(Files):
         print(f"Connection with {address} closed")
 
 
+  #check user validity
   def validity(self, client_socket, destination):
     client_socket.send(b'$exist_user')
     time.sleep(0.1)
     try:
-      with open(f'user_data/{destination[6:]}', 'rb') as file:
-        user = pickle.load(file)
+      contact = self.make_contact_user(client_socket, destination[6:])
 
-        contact = {
-          "messages": [],
-          "username": user['username'],
-          "bio": user['bio'],
-          "profile_image": user['profile_image'],
-          "phone": None,
-          "public_key": user['public_key']
-        }
+      client_socket.send(pickle.dumps(contact))
+      time.sleep(0.1)
 
-        client_socket.send(pickle.dumps(contact))
+      if contact['profile_image'] != None:
+        client_socket.send((f'$profile_image {contact['username']}').encode())
         time.sleep(0.1)
 
-        if contact['profile_image'] != None:
-          client_socket.send((f'$profile_image {user['username']}').encode())
-          time.sleep(0.1)
-          with open(f'user_data/{user['username']}.jpg', 'rb') as file:
-            data = file.read()
-          client_socket.send(data+self.cutter)
-          time.sleep(max(0.1, len(data)/2e5))
+        with open(f'user_data/{contact['username']}.jpg', 'rb') as file:
+          data = file.read()
+
+        client_socket.send(data+self.cutter)
+        time.sleep(max(0.1, len(data)/2e5))
     except:
       client_socket.send(b'0')
 
 
+  #change user info protocol
   def change_info(self, client_socket, username):
     new_user_data = pickle.loads(client_socket.recv(1048576))
 
@@ -251,6 +261,7 @@ class Server(Files):
     return True
 
 
+  #for handeling the client we must have while
   def do_the_while(self, client_socket, username, user_data):
     send_object = Send(self.cutter, self.encryption, self.users, self.queue)
 
@@ -287,6 +298,8 @@ class Server(Files):
             client_thread.start()
       except:
         self.server_socket.close()
+
+
 
 if __name__ == '__main__':
     Server()
