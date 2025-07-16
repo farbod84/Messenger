@@ -9,10 +9,12 @@ class Server:
     self.cutter = b''
     for i in range(10):
       self.cutter += chr(i).encode()
+
     self.users = {}
     self.queue = {}
     self.encryption = Encryption()
     self.server_program()
+
 
   def authenticate(self, client_socket, username):
       user_data = None
@@ -22,49 +24,86 @@ class Server:
       except:
         client_socket.send(b'404')
         return
+
+      #send time hash to sign
       public_key = self.encryption.load_public_key(user_data["public_key"])
       time_hash = self.encryption.hash(time.time())
       client_socket.send(time_hash)
       sign = client_socket.recv(1048576)
+
+      #verfy the sign
       if not self.encryption.verify(time_hash, sign, public_key):
         client_socket.send(b'403')
         return False
+
       client_socket.send(b'0')
       time.sleep(0.1)
+
       return user_data
+
+
+  def open_userdata(self, client_socket, username):
+    try:
+      with open(f'user_data/{username}', 'rb') as file:
+        user_data = pickle.load(file)
+    except:
+      client_socket.send(b'404')
+      return 
+    return user_data
+
+
+  def login(self, client_socket):
+    username = client_socket.recv(1024).decode()
+
+    user_data = self.open_userdata(client_socket, username)
+    if not user_data: return
+
+    #do some authenticate
+    client_socket.send(user_data['private_key'])
+    if self.authenticate(client_socket, username):
+      client_socket.send(pickle.dumps(user_data))
+    else:
+      client_socket.send(b'403')
+
+
+  def signup(self, client_socket):
+    user_data = pickle.loads(client_socket.recv(1048576))
+
+    #check username validity
+    for e in '!@#$%^&*()-=+\'\\:;\".,/ \n\t':
+      if e in user_data['username']:
+        client_socket.send(b'2')
+        return
+
+    if self.check_exits(user_data, client_socket): return
+
+    #done!
+    self.save_user_data(user_data)
+    client_socket.send(b'0')
+
+
+  def save_user_data(self, user_data):
+    with open(f'user_data/{user_data['username']}', 'wb') as file:
+      pickle.dump(user_data, file)
+
+
+  #for checking the username is it allreasy exits
+  def check_exits(self, user_data, client_socket):
+    try:
+      with open(f'user_data/{user_data['username']}', 'rb') as file:
+        client_socket.send(b'1')
+        return True
+    except:
+      return False
+
 
   def handle_client(self, client_socket, address):
       username = client_socket.recv(1024).decode()
       if username == '$login':
-        username = client_socket.recv(1024).decode()
-        user_data = None
-        try:
-          with open(f'user_data/{username}', 'rb') as file:
-            user_data = pickle.load(file)
-        except:
-          client_socket.send(b'404')
-          return
-        client_socket.send(user_data['private_key'])
-        if self.authenticate(client_socket, username):
-          client_socket.send(pickle.dumps(user_data))
-        else:
-          client_socket.send(b'403')
+        self.login(client_socket)
         return
       elif username == '$create_account':
-        user_data = pickle.loads(client_socket.recv(1048576))
-        for e in '!@#$%^&*()-=+\'\\:;\".,/ \n\t':
-          if e in user_data['username']:
-            client_socket.send(b'2')
-            return
-        try:
-          with open(f'user_data/{user_data['username']}', 'rb') as file:
-            client_socket.send(b'1')
-            return
-        except:
-          pass
-        with open(f'user_data/{user_data['username']}', 'wb') as file:
-          pickle.dump(user_data, file)
-        client_socket.send(b'0')
+        self.signup(client_socket)
         return
       user_data = self.authenticate(client_socket, username)
       if not user_data:
