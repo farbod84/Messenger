@@ -5,6 +5,7 @@ from PySide6.QtWidgets import QAbstractItemView, QListWidgetItem, QMessageBox
 from main import *
 from client import User
 from database import Database
+from login import get
 import threading
 import pickle
 import uuid
@@ -246,13 +247,14 @@ class ContactHeaderWidget(QWidget):
 
 class ChatSignals(QObject):
     new_message = Signal(str, str, bool)
+    refresh_contact_list = Signal()
+
 
 
 class Recv_client:
-    def __init__(self, refresh_contact_list, contacts, database, current_contact, signals):
+    def __init__(self, contacts, database, current_contact, signals):
         self.signals = signals
         self.current_contact = current_contact
-        self.refresh_contact_list = refresh_contact_list
         self.contacts = contacts
         self.database = database
 
@@ -268,17 +270,13 @@ class Recv_client:
         else:
             print('connection successfully:)')
 
-        #make thread to recv data
-        thread = threading.Thread(target=self.recv_message)
-        thread.start()
-
 
     #revice message and images
     def recv_message(self):
         while True:
             given = self.user.recv_data()
             if not given:
-                self.refresh_contact_list()
+                self.signals.refresh_contact_list.emit()
                 continue
 
             #convert given data to username and data
@@ -290,7 +288,7 @@ class Recv_client:
 
             #update users
             if username == '$exist_user':
-                self.update_user_info()
+                self.update_user_info(data)
                 continue
 
             #save images
@@ -359,16 +357,18 @@ class Recv_client:
             self.contacts[contact['username']]['messages'] = []
         self.database.save_contact_list(self.contacts)
 
-        self.refresh_contact_list()
+        self.signals.refresh_contact_list.emit()
 
 
 
-class ChatTab(Widget, Recv_client):
+class ChatTab(Widget):
     def __init__(self):
         Widget.__init__(self, "Chats")
 
         self.signals = ChatSignals()
         self.signals.new_message.connect(self.append_message)
+        self.signals.refresh_contact_list.connect(self.refresh_contact_list)
+
 
         self.database = Database()
 
@@ -384,15 +384,35 @@ class ChatTab(Widget, Recv_client):
 
         self.init_ui()
 
-        Recv_client.__init__(self, self.refresh_contact_list, self.contacts, 
-                             self.database, self.current_contact, self.signals)
+        self.recv_client = Recv_client(self.contacts, 
+            self.database, self.current_contact, self.signals)
+
+        self.user = self.recv_client.user
+
+        #make thread to recv data
+        thread = threading.Thread(target=self.recv_client.recv_message)
+        thread.start()
 
         #update the users
         for contact in self.contacts:
             self.user.check_user(self.contacts[contact]['username'])
 
+
+    def open_data(self):
+        try:
+            self.contacts = self.database.load_contacts()
+        except:
+            get()
+            self.contacts = self.database.load_contacts()
+            try:
+                with open('user_data.conf', 'rb') as file:
+                    self.user_data = pickle.load(file)
+            except:
+                exit(0)
+
+
     def init_ui(self):
-        self.contacts = self.database.load_contacts()
+        self.open_data()
 
         self.current_contact = list(self.contacts.keys())[0]
 
@@ -499,12 +519,14 @@ class ChatTab(Widget, Recv_client):
         self.contact_list.setIconSize(QSize(60, 60))
         self.contact_list.setCurrentRow(0)
 
+
     def show_add_contact_dialog(self):
         dialog = AddContactDialog()
         if dialog.exec():
             info = dialog.get_contact_info()
             self.contacts[info[0]] = {"name" : info[0], "messages" : [], "username" : info[1]}
             self.user.check_user(info[1])
+
 
     def change_chat(self, current):
         if current:
@@ -514,6 +536,7 @@ class ChatTab(Widget, Recv_client):
             self.header_widget.delete_btn.clicked.connect(self.delete_current_chat)
             self.layout().itemAt(1).layout().insertWidget(0, self.header_widget)
             self.load_chat()
+
 
     def delete_current_chat(self):
         if self.contacts[self.current_contact]['username'] == self.user.username:

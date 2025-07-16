@@ -14,6 +14,7 @@ class Send:
 
 
   def recv_data_and_sign(self, client_socket):
+    data = b''
     while data == b'' or data[-10:] != self.cutter:
       data += client_socket.recv(1024)
     if self.cutter in data[:-10]:
@@ -28,7 +29,6 @@ class Send:
 
   def send_message(self, destination, client_socket, username, user_data):
     user_destination = destination[5:]
-    data = b''
 
     data, sign = self.recv_data_and_sign(client_socket)
 
@@ -278,8 +278,8 @@ class Server(Files):
             continue
         continue
 
-      if not self.send_message(destination, client_socket, username, user_data):
-        send_object.send_message(destination, client_socket, username, user_data)
+      if not send_object.send_message(destination, client_socket, username, user_data):
+        break
 
 
   def server_program(self):

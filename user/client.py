@@ -2,7 +2,6 @@ import socket
 from time import sleep
 from encryption import Encryption
 import pickle
-from login import get
 
 class User:
     def __init__(self):
@@ -26,6 +25,7 @@ class User:
         self.encryption.load_key(self.user_data['private_key'], self.user_data['password'])
 
         self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.connect_server()
 
 
     def wait_for_connect(self):
@@ -55,18 +55,13 @@ class User:
         try:
             with open('server.conf') as file:
                 url = file.read().split(':')
+
             with open('user_data.conf', 'rb') as file:
                 self.user_data = pickle.load(file)
         except:
             if url[0] == '':
                 print('invalid server url')
                 exit()
-            get()
-            try:
-                with open('user_data.conf', 'rb') as file:
-                    self.user_data = pickle.load(file)
-            except:
-                exit(0)
         return url
 
 
@@ -140,8 +135,9 @@ class User:
             if not username: return
         except: return
 
-        if (username[0] != '$' or username[:14] == '$profile_image'):
-            if not self.recv_profile(username): return
+        if username[0] != '$' or username[:14] == '$profile_image':
+            data = self.recv_profile(username)
+            if not data: return
         else:
             data = self.s.recv(1048576)
 
@@ -162,7 +158,7 @@ class User:
             self.save_profile(username, data)
             return False
 
-        return True
+        return data
 
 
     def save_profile(self, username, data):
