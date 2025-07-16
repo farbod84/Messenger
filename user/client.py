@@ -7,10 +7,50 @@ from login import get
 class User:
     def __init__(self):
         self.error = 0
+
+        #make cutter to make intrupt bitween data
         self.cutter = b''
         for i in range(10):
             self.cutter += chr(i).encode()
+
         self.user_data = {}
+
+        url = self.get_url()
+
+        #get ip and port from url
+        self.ip = url[0]
+        self.port = int(url[1])
+
+        self.username = self.user_data['username']
+        self.encryption = Encryption()
+        self.encryption.load_key(self.user_data['private_key'], self.user_data['password'])
+
+        self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+
+    def wait_for_connect(self):
+        connected = False
+        while not connected:
+            try:
+                self.s.connect((self.ip, self.port))
+                connected = True
+            except:
+                sleep(5)
+
+
+    def connect_server(self):
+        try:
+            self.wait_for_connect()
+            self.s.send(self.username.encode())
+            self.s.send(self.encryption.sign(self.s.recv(1024)))
+            error = self.s.recv(1024).decode()
+            if error != '0':
+                self.error = 1000+int(error)
+        except:
+            self.error = 100
+
+
+    def get_url(self):
         url = ['', 0]
         try:
             with open('server.conf') as file:
@@ -27,27 +67,8 @@ class User:
                     self.user_data = pickle.load(file)
             except:
                 exit(0)
-        self.ip = url[0]
-        self.port = int(url[1])
-        self.username = self.user_data['username']
-        self.encryption = Encryption()
-        self.encryption.load_key(self.user_data['private_key'], self.user_data['password'])
-        self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        try:
-            connected = False
-            while not connected:
-                try:
-                    self.s.connect((self.ip, self.port))
-                    connected = True
-                except:
-                    sleep(5)
-            self.s.send(self.username.encode())
-            self.s.send(self.encryption.sign(self.s.recv(1024)))
-            error = self.s.recv(1024).decode()
-            if error != '0':
-                self.error = 1000+int(error)
-        except:
-            self.error = 100
+        return url
+
 
     def send_data(self, destination_username, destination_public_key, data, is_file = False):
         if destination_username == self.username: return
@@ -60,6 +81,7 @@ class User:
         sleep(max(0.1, len(data)/2e5))
         self.s.send(self.encryption.sign((destination_username[5:], data))+self.cutter)
         sleep(0.1)
+
 
     def change_info(self, new_user_data):
         self.s.send(b'$change_info')
@@ -81,10 +103,12 @@ class User:
         self.s.send(self.encryption.sign((destination_username[5:], data))+self.cutter)
         sleep(0.1)
 
+
     def check_user(self, username):
         username = 'valid:'+username
         self.s.send(username.encode())
         sleep(0.1)
+
 
     def recv_data(self):
         try:
