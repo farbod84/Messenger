@@ -248,9 +248,16 @@ class ChatSignals(QObject):
     new_message = Signal(str, str, bool)
 
 
-class Connect_with_client:
-    def __init__(self):
+class Recv_client:
+    def __init__(self, refresh_contact_list, contacts, database, current_contact, signals):
+        self.signals = signals
+        self.current_contact = current_contact
+        self.refresh_contact_list = refresh_contact_list
+        self.contacts = contacts
+        self.database = database
+
         self.user = User()
+
         # for handeling the errors :
         if self.user.error == 404:
             print('private_key pem not found:(')
@@ -264,26 +271,6 @@ class Connect_with_client:
         thread = threading.Thread(target=self.recv_message)
         thread.start()
 
-    #send text message
-    def send_message(self):
-        text = self.input_field.text().strip()
-        if not text:
-            return
-
-        self.contacts[self.current_contact]["messages"].append((text, 'me'))
-        self.append_message(text, 'me')
-
-        self.user.send_data(self.contacts[self.current_contact]["username"], self.contacts[self.current_contact]["public_key"], text)
-
-        self.input_field.clear()
-
-    #send image data
-    def send_image(self):
-        filename, _ = QFileDialog.getOpenFileName(self, "Select Image", "", "Images (*.png *.jpg *.jpeg *.bmp)")
-        if filename:
-            self.contacts[self.current_contact]["messages"].append((filename, 'me', True))
-            self.append_message(filename, 'me', is_image=True)
-            self.user.send_data(self.contacts[self.current_contact]["username"], self.contacts[self.current_contact]["public_key"], filename, True)
 
     #revice message and images
     def recv_message(self):
@@ -336,10 +323,9 @@ class Connect_with_client:
                     self.contacts[username] = {"messages": [(data, 'other')], "username": username}
                 self.user.check_user(username)
 
-class ChatTab(Widget, Connect_with_client):
+class ChatTab(Widget, Recv_client):
     def __init__(self):
         Widget.__init__(self, "Chats")
-        Connect_with_client.__init__(self)
 
         self.signals = ChatSignals()
         self.signals.new_message.connect(self.append_message)
@@ -357,6 +343,8 @@ class ChatTab(Widget, Connect_with_client):
         self.chat_list.setSpacing(5)
 
         self.init_ui()
+
+        Recv_client.__init__(self)
 
     def init_ui(self):
         self.contacts = self.database.load_contacts()
@@ -419,7 +407,6 @@ class ChatTab(Widget, Connect_with_client):
         self.image_btn.setFixedSize(50, 50)
         self.image_btn.clicked.connect(self.send_image)
 
-
         input_layout.addWidget(self.input_field)
         input_layout.addWidget(self.send_btn)
         input_layout.addWidget(self.image_btn)
@@ -435,6 +422,7 @@ class ChatTab(Widget, Connect_with_client):
 
         for contact in self.contacts:
             self.user.check_user(self.contacts[contact]['username'])
+
 
     def refresh_contact_list(self):
         self.contact_list.clear()
@@ -520,6 +508,31 @@ class ChatTab(Widget, Connect_with_client):
             else:
                 del msg
 
+    #send text message
+    def send_message(self):
+        text = self.input_field.text().strip()
+        if not text:
+            return
+
+        self.contacts[self.current_contact]["messages"].append((text, 'me'))
+        self.append_message(text, 'me')
+
+        public_key = self.contacts[self.current_contact]["public_key"]
+        self.user.send_data(self.contacts[self.current_contact]["username"], public_key, text)
+
+        self.input_field.clear()
+
+
+    #send image data
+    def send_image(self):
+        filename, _ = QFileDialog.getOpenFileName(self, "Select Image", "", "Images (*.png *.jpg *.jpeg *.bmp)")
+        if filename:
+            self.contacts[self.current_contact]["messages"].append((filename, 'me', True))
+            self.append_message(filename, 'me', is_image=True)
+            public_key = self.contacts[self.current_contact]["public_key"]
+            self.user.send_data(self.contacts[self.current_contact]["username"], public_key, filename, True)
+
+    #append message to the chat table
     def append_message(self, content: str, sender: str = 'me', is_image: bool = False):
         item_widget = MessageWidget(content, sender, is_image)
         list_item = QListWidgetItem()
