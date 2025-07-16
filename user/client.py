@@ -37,7 +37,7 @@ class User:
             except:
                 sleep(5)
 
-
+    #connect to the server and authenticate
     def connect_server(self):
         try:
             self.wait_for_connect()
@@ -49,7 +49,7 @@ class User:
         except:
             self.error = 100
 
-
+    #get server url from server.conf
     def get_url(self):
         url = ['', 0]
         try:
@@ -70,36 +70,60 @@ class User:
         return url
 
 
+    #send data with encryption
     def send_data(self, destination_username, destination_public_key, data, is_file = False):
+        #we don't send message for us, it's wierd!
         if destination_username == self.username: return
-        data = self.encryption.encrypt(data, self.encryption.load_public_key(destination_public_key), is_file)
+
+        #let encrypt it
+        public_key = self.encryption.load_public_key(destination_public_key)
+        data = self.encryption.encrypt(data, public_key, is_file)
+
+        #ok so now we can send data
         destination_username = 'send:'+destination_username
         data += self.cutter
         self.s.send(destination_username.encode())
         sleep(0.1)
+
         self.s.send(data)
         sleep(max(0.1, len(data)/2e5))
+
+        #lets also send the signture for they can trust us
         self.s.send(self.encryption.sign((destination_username[5:], data))+self.cutter)
         sleep(0.1)
 
 
     def change_info(self, new_user_data):
+        #send change info order
         self.s.send(b'$change_info')
         sleep(0.1)
+
+        #send new_user_data
         self.s.send(pickle.dumps(new_user_data))
         sleep(0.1)
+
+        #lets make it more trust able
         self.s.send(self.encryption.sign(new_user_data))
         sleep(0.1)
+
         if not new_user_data['profile_image']:
             return
+
+        #lets also send our profile
         with open(new_user_data['profile_image'], 'rb') as file:
             data = file.read()
+
         destination_username = 'send:$profile_image'
         data += self.cutter
+
+        #now send the profile
         self.s.send(destination_username.encode())
         sleep(0.1)
+
         self.s.send(data)
         sleep(max(0.1, len(data)/2e5))
+
+        #lets make it more trust able because just we can change our profile
         self.s.send(self.encryption.sign((destination_username[5:], data))+self.cutter)
         sleep(0.1)
 
