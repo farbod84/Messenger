@@ -139,18 +139,32 @@ class User:
             username = self.s.recv(1024).decode()
             if not username: return
         except: return
-        if username[0] != '$' or username[:14] == '$profile_image':
-            data = b''
-            while data == b'' or data[-10:] != self.cutter:
-                data += self.s.recv(1024)
-            if username[:14] != '$profile_image':
-                data = self.encryption.decrypt(data[:-10])
-            else:
-                with open(f'database/{username[15:]}.jpg', 'wb') as file:
-                    file.write(data[:-10])
-                return
+
+        if (username[0] != '$' or username[:14] == '$profile_image'):
+            if not self.recv_profile(username): return
         else:
             data = self.s.recv(1048576)
+
+        #make methode output
         if type(data) == type((0, 0)):
             return (username, data[0], True)
         return (username, data)
+
+
+    def recv_profile(self, username):
+        data = b''
+        while data == b'' or data[-10:] != self.cutter:
+            data += self.s.recv(1024)
+
+        if username[:14] != '$profile_image':
+            data = self.encryption.decrypt(data[:-10])
+        else:
+            self.save_profile(username, data)
+            return False
+
+        return True
+
+
+    def save_profile(self, username, data):
+        with open(f'database/{username[15:]}.jpg', 'wb') as file:
+            file.write(data[:-10])
